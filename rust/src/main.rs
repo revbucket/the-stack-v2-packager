@@ -89,9 +89,11 @@ fn get_output_file_loc(local_jsonl_dir: &PathBuf, language: &String, parquet_num
 fn process_row(mut row: JsonValue, blob_loc: &PathBuf) -> Result<JsonValue, Error> {
     let blob_id = row.get("blob_id").unwrap().as_str().unwrap();
     let blob_file = blob_loc.join(format!("{}{}", blob_id, ".gz"));
-    let blob_contents = read_gzip_file(&blob_file).unwrap();
-    let blob_str = JsonValue::String(String::from_utf8(blob_contents).unwrap());
-    row["contents"] = blob_str;
+
+    let blob_contents: Vec<u8> = read_gzip_file(&blob_file).unwrap();
+    // Convert bytes to base64 string for safe JSON encoding
+    let base64_str = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &blob_contents);
+    row["contents"] = JsonValue::String(base64_str);    
 
     Ok(row)
 }
