@@ -55,7 +55,7 @@ draw_progress_bar() {
 # Process each line with progress bar
 while IFS= read -r line; do
     ((current_line++))
-    
+    base_dir="/mnt/raid0"
     # Check if this line should be processed (line_number mod j equals i)
     # Note: We use current_line-1 because bash arrays are 0-based
     if [ $(( (current_line-1) % j )) -eq "$i" ]; then
@@ -63,12 +63,13 @@ while IFS= read -r line; do
 		
 		# Step 1: Download all things with s5cmd 
 		cmd_file="${line%.parquet}.cmd.txt"
-		echo "s5cmd run /mnt/raid0/${cmd_file}"
+		echo "s5cmd run ${base_dir}/${cmd_file}"
 		lang=$(basename "$(dirname "$line")")
 
-		echo "./rust/target/release/rust process-parquet --parquet-file ${line} --local-jsonl-dir /mnt/raid0/jsonls/${lang}"
-		echo "s5cmd sync /mnt/raid0/jsonls/${lang}/ s3://ai2-llm/pretraining-data/sources/the-stack-v2/jsonl_data/${lang}/"
-		echo "rm -rf /mnt/raid0/jsonls/${lang}"
+		echo "./rust/target/release/rust process-parquet --parquet-file ${base_dir}/the-stack-v2/raw-hf-parquets/${line} --local-jsonl-dir ${base_dir}/jsonls/${lang}"
+		echo "s5cmd sync ${base_dir}/jsonls/${lang}/ s3://ai2-llm/pretraining-data/sources/the-stack-v2/jsonl_data/${lang}/"
+		echo "rm -rf ${base_dir}/the-stack-v2/data/"
+		echo "rm -rf ${base_dir}/jsonls/${lang}"
 		echo ""
         #sleep 5.0
 
