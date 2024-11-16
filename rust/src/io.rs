@@ -159,19 +159,22 @@ pub(crate) fn read_gzip_file(path: &PathBuf) -> Result<Vec<u8>> {
 }
 
 
-pub(crate) fn save_jsonlgz(jsons: Vec<JsonValue>, output_path: &PathBuf) -> Result<(), Error> {
-	if let Some(parent) = output_path.parent() {
-		fs::create_dir_all(parent).unwrap();
-	}
-	let file = File::create(output_path).unwrap();
-	let gz = GzEncoder::new(file, Compression::default());
-	let mut writer = BufWriter::new(gz);
-	for value in jsons {
-		writeln!(writer, "{}", value.to_string()).unwrap();
-	}
-	writer.flush().unwrap();
-
-	Ok(())
+pub(crate) fn write_string_gzip(content: String, path: PathBuf) -> Result<(), Error> {
+    // Use a large buffer (8MB) for better performance
+    const BUFFER_SIZE: usize = 16 * 1024 * 1024;
+    
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let file = File::create(path).unwrap();
+    let gz = GzEncoder::new(file, Compression::fast());
+    let mut writer = BufWriter::with_capacity(BUFFER_SIZE, gz);
+    
+    // Write the entire string at once
+    writer.write_all(content.as_bytes()).unwrap();
+    writer.flush().unwrap();
+    
+    Ok(())
 }
 
 

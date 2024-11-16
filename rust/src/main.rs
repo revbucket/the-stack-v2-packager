@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use anyhow::{Result, Error};
-use crate::io::{load_parquet_as_json_parallel, read_gzip_file, save_jsonlgz};
+use crate::io::{load_parquet_as_json_parallel, read_gzip_file, write_string_gzip};
 use serde_json::{Value as JsonValue};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::time::Instant;
+use encoding_rs::*;
 
 pub mod io;
 
@@ -86,17 +87,34 @@ fn get_output_file_loc(local_jsonl_dir: &PathBuf, language: &String, parquet_num
 }
 
 
+
+fn convert_to_utf8(input: &[u8], encoding_name: &str) -> Result<Vec<u8>, String> {
+    // Get the encoding by name
+    let encoding = Encoding::for_label(encoding_name.as_bytes())
+        .ok_or_else(|| format!("Unsupported encoding: {}", encoding_name))?;
+    
+    // Decode from source encoding to UTF-8
+    let (cow, _, had_errors) = encoding.decode(input);
+    if had_errors {
+        return Err(format!("Decoding error for {}", encoding_name));
+    }
+    
+    // Return the UTF-8 bytes
+    Ok(cow.into_owned().into_bytes())
+}
+
+
+
 fn process_row(mut row: JsonValue, blob_loc: &PathBuf) -> Result<JsonValue, Error> {
     let blob_id = row.get("blob_id").unwrap().as_str().unwrap();
     let blob_file = blob_loc.join(format!("{}{}", blob_id, ".gz"));
-
     let blob_contents: Vec<u8> = read_gzip_file(&blob_file).unwrap();
-    // Convert bytes to base64 string for safe JSON encoding
-    let base64_str = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &blob_contents);
-    row["contents"] = JsonValue::String(base64_str);    
+    let utf_contents = convert_to_utf8(&blob_contents, row["src_encoding"].as_str().unwrap()).unwrap();
 
+    row["contents"] = JsonValue::String(String::from_utf8(utf_contents).unwrap());  
     Ok(row)
 }
+
 
 
 /*=============================================
@@ -108,19 +126,27 @@ fn process_parquet_file(pqt: &PathBuf, local_jsonl_dir: &PathBuf, max_lines: usi
     let start_main = Instant::now();    
     let (blob_loc, language, pqt_number) = extract_pqt_locations(pqt.clone()).unwrap();
     let rows: Vec<JsonValue> = load_parquet_as_json_parallel(pqt.clone()).unwrap();
-
+    println!("Read pqt in {:?} msecs", start_main.elapsed().as_millis());
     // Step 2: loop over chunks of rows 
     let mut chunk_num = 0; 
+
+
     let num_chunks = rows.len().div_ceil(max_lines);
     let pbar = build_pbar(num_chunks, "Chunks");
     for chunk in rows.chunks(max_lines) {
         // and process each row of the chunk (in parallel!)
-        let processed_chunk : Vec<JsonValue> = chunk.into_par_iter()
-            .map(|v| process_row(v.clone(), &blob_loc).unwrap())
-            .collect();
+        let start_chunk = Instant::now();
+        let processed_chunk : String = chunk.into_par_iter()
+            .map(|v| {
+                format!("{}\n", process_row(v.clone(), &blob_loc).unwrap().to_string())
+            })
+            .collect::<String>();
 
+        println!("Processed cuhnk in {:?} msecs", start_chunk.elapsed().as_millis());
         let output_file_loc = get_output_file_loc(local_jsonl_dir, &language, &pqt_number, chunk_num);
-        save_jsonlgz(processed_chunk, &output_file_loc).unwrap();
+        let start_save = Instant::now();
+        write_string_gzip(processed_chunk, output_file_loc).unwrap();
+        println!("Saved chunk in {:?} msecs", start_save.elapsed().as_millis());
         chunk_num += 1;
         pbar.inc(1);
     }
