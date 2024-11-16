@@ -64,7 +64,8 @@ while IFS= read -r line; do
 		# Step 1: Download all things with s5cmd 
 		cmd_file="${line%.parquet}.cmd.txt"
 		echo ""
-		s5cmd run ${base_dir}/the-stack-v2/raw-hf-parquets/${cmd_file}
+        echo "Working on ${line}..."
+		s5cmd run ${base_dir}/the-stack-v2/raw-hf-parquets/${cmd_file} > /dev/null
 		lang=$(basename "$(dirname "$line")")
 
 		./rust/target/release/rust process-parquet --parquet-file ${base_dir}/the-stack-v2/raw-hf-parquets/${line} --local-jsonl-dir ${base_dir}/jsonls/${lang}
