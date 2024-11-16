@@ -64,16 +64,15 @@ while IFS= read -r line; do
 		# Step 1: Download all things with s5cmd 
 		cmd_file="${line%.parquet}.cmd.txt"
 		echo ""
-		echo "s5cmd run ${base_dir}/the-stack-v2/raw-hf-parquets/${cmd_file}"
+		s5cmd run ${base_dir}/the-stack-v2/raw-hf-parquets/${cmd_file}
 		lang=$(basename "$(dirname "$line")")
 
-		echo "./rust/target/release/rust process-parquet --parquet-file ${base_dir}/the-stack-v2/raw-hf-parquets/${line} --local-jsonl-dir ${base_dir}/jsonls/${lang}"
-		echo "s5cmd sync ${base_dir}/jsonls/${lang}/ s3://ai2-llm/pretraining-data/sources/the-stack-v2/jsonl_data/${lang}/"
-		echo "rm -rf ${base_dir}/the-stack-v2/data/"
-		echo "rm -rf ${base_dir}/jsonls/${lang}"
+		./rust/target/release/rust process-parquet --parquet-file ${base_dir}/the-stack-v2/raw-hf-parquets/${line} --local-jsonl-dir ${base_dir}/jsonls/${lang}
+		s5cmd sync ${base_dir}/jsonls/${lang}/ s3://ai2-llm/pretraining-data/sources/the-stack-v2/jsonl_data/${lang}/
+		rm -rf ${base_dir}/the-stack-v2/data/
+		rm -rf ${base_dir}/jsonls/${lang}
 		echo ""
         #sleep 5.0
-        aoeuuoae
         # Calculate percentage based on processed lines
         percentage=$(printf "%.0f" $(echo "$processed_lines * 100 / $expected_lines" | bc -l))        
         # Update progress bar
