@@ -1,3 +1,4 @@
+use crc32fast::Hasher;  // You'll need crc32fast = "1.3" in Cargo.toml
 use std::io::{BufWriter, Write};
 use std::fs;
 use flate2::Compression;
@@ -8,7 +9,7 @@ use std::path::PathBuf;
 use std::fs::File;
 use anyhow::{Result, Error};
 use rayon::prelude::*;
-
+use encoding_rs::*;
 
 use arrow::{
     array::{Array, BooleanArray, Int64Array, ListArray, StringArray, TimestampNanosecondArray},
@@ -17,7 +18,18 @@ use arrow::{
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use serde_json::{json, Value as JsonValue};
+use oem_cp::{decode_string_complete_table, decode_string_incomplete_table_checked, decode_string_incomplete_table_lossy};
+use oem_cp::code_table::{DECODING_TABLE_CP855, DECODING_TABLE_CP852};
 
+
+const GZIP_HEADER: [u8; 10] = [
+    0x1f, 0x8b,       // Magic numbers
+    0x08,             // Compression method (deflate)
+    0x00,             // Flags
+    0x00, 0x00, 0x00, 0x00,  // Modification time
+    0x00,             // Extra flags
+    0x00,             // Operating system
+];
 
 /*====================================================================
 =                      READ PARQUET INTO LIST OF JSONS               =
@@ -137,6 +149,83 @@ pub(crate) fn load_parquet_as_json_parallel(path: PathBuf) -> Result<Vec<JsonVal
     Ok(json_records)
 }
 
+/*==============================================================
+=                        ENCODING/DECODING HELPERS             =
+==============================================================*/
+
+#[derive(Debug)]
+pub enum DecodingError {
+    UnsupportedEncoding(String),
+    DecodingFailed(String),
+}
+
+/// Decodes bytes from the specified encoding into a UTF-8 String
+pub(crate) fn decode_to_string(bytes: &[u8], encoding_name: &str) -> Result<String, Error> {
+    // Get the encoding by name
+
+    if encoding_name == "IBM852" {
+        return Ok(decode_string_complete_table(bytes, &DECODING_TABLE_CP852));
+    }
+    if encoding_name == "IBM855" {
+        return Ok(decode_string_complete_table(bytes, &DECODING_TABLE_CP855));
+    }
+
+    let encoding = match encoding_name.to_uppercase().as_str() {
+        "BIG5" => BIG5,
+        "EUC-JP" => EUC_JP,
+        "GB18030" => GB18030,  
+        "ISO-8859-1" => WINDOWS_1252, 
+        "ISO-8859-2" | "ISO8859-2" => ISO_8859_2,
+        "ISO-8859-3" | "ISO8859-3" => ISO_8859_3,        
+        "ISO-8859-4" | "ISO8859-4" => ISO_8859_4,
+        "ISO-8859-5" | "ISO8859-5" => ISO_8859_5,
+        "ISO-8859-6" | "ISO8859-6" => ISO_8859_6,
+        "ISO-8859-7" | "ISO8859-7" => ISO_8859_7,
+        "ISO-8859-8" | "ISO8859-8" => ISO_8859_8,
+        "ISO-8859-9" | "ISO8859-9" => Encoding::for_label(b"ISO-8859-9").unwrap(),        
+        "ISO-8859-10" | "ISO8859-10" => ISO_8859_10,
+        "ISO-8859-11" | "ISO8859-11" => Encoding::for_label(b"ISO-8859-11").unwrap(),
+
+        "ISO-8859-13" | "ISO8859-13" => ISO_8859_13,
+        "ISO-8859-14" | "ISO8859-14" => ISO_8859_14,
+        "ISO-8859-15" | "ISO8859-15" => ISO_8859_15,
+        "ISO-8859-16" | "ISO8859-16" => ISO_8859_16,
+        "KOI8-R" | "KOI8R" => KOI8_R,
+        "KOI8-U" | "KOI8U" => KOI8_U,
+        "MACINTOSH" | "MAC" => MACINTOSH,
+        "MACCENTRALEUROPE" => WINDOWS_1250,
+        "MACCYRILLIC" => X_MAC_CYRILLIC,
+        "SHIFT_JIS" => SHIFT_JIS,
+        "TIS-620" => WINDOWS_874,
+        "UHC" => EUC_KR,
+        "UTF-16" => UTF_16BE,
+        "WINDOWS-874" | "CP874" => WINDOWS_874,
+        "WINDOWS-1250" | "CP1250" => WINDOWS_1250,
+        "WINDOWS-1251" | "CP1251" => WINDOWS_1251,
+        "WINDOWS-1252" | "CP1252" => WINDOWS_1252,
+        "WINDOWS-1253" | "CP1253" => WINDOWS_1253,
+        "WINDOWS-1254" | "CP1254" => WINDOWS_1254,
+        "WINDOWS-1255" | "CP1255" => WINDOWS_1255,
+        "WINDOWS-1256" | "CP1256" => WINDOWS_1256,
+        "WINDOWS-1257" | "CP1257" => WINDOWS_1257,
+        "WINDOWS-1258" | "CP1258" => WINDOWS_1258,
+        "UTF-8" | "UTF8" => UTF_8,
+        _ => return Err(Error::msg(format!("BAD ENCODING {:?}", encoding_name))),
+    };
+    
+    // Decode the bytes
+    let (cow, _, had_errors) = encoding.decode(bytes);
+    
+    if had_errors {
+        Err(Error::msg(format!(
+            "Failed to decode bytes using {} encoding",
+            encoding_name
+        )))
+    } else {
+        Ok(cow.into_owned())
+    }
+}
+
 
 /*=============================================================
 =                        GZIP TO/FROM BYTES                   =
@@ -176,5 +265,21 @@ pub(crate) fn write_string_gzip(content: String, path: PathBuf) -> Result<(), Er
     
     Ok(())
 }
+
+pub(crate) fn write_bytes_gzip(content: Vec<u8>, path: PathBuf) -> Result<(), Error> {
+    // Use a large buffer (8MB) for better performance
+    const BUFFER_SIZE: usize = 16 * 1024 * 1024;
+    
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let mut file = File::create(path).unwrap();
+
+    file.write_all(&content).unwrap();
+
+
+    Ok(())
+}
+
 
 

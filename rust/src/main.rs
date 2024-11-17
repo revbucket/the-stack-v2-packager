@@ -1,14 +1,27 @@
 use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use anyhow::{Result, Error};
-use crate::io::{load_parquet_as_json_parallel, read_gzip_file, write_string_gzip};
+use crate::io::{load_parquet_as_json_parallel, read_gzip_file, write_string_gzip, decode_to_string, write_bytes_gzip};
 use serde_json::{Value as JsonValue};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::time::Instant;
 use encoding_rs::*;
+use crc32fast::Hasher;
+
+use std::io::{Write};
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
 pub mod io;
+const GZIP_HEADER: [u8; 10] = [
+    0x1f, 0x8b,       // Magic numbers
+    0x08,             // Compression method (deflate)
+    0x00,             // Flags
+    0x00, 0x00, 0x00, 0x00,  // Modification time
+    0x00,             // Extra flags
+    0x00,             // Operating system
+];
 
 
 /*==============================================
@@ -49,6 +62,7 @@ enum Commands {
 /*=================================================
 =                HELPER METHODS                   =
 =================================================*/
+
 
 fn build_pbar(num_items: usize, units: &str) -> ProgressBar {
     let mut template = String::from(units);
@@ -109,9 +123,8 @@ fn process_row(mut row: JsonValue, blob_loc: &PathBuf) -> Result<JsonValue, Erro
     let blob_id = row.get("blob_id").unwrap().as_str().unwrap();
     let blob_file = blob_loc.join(format!("{}{}", blob_id, ".gz"));
     let blob_contents: Vec<u8> = read_gzip_file(&blob_file).unwrap();
-    let utf_contents = convert_to_utf8(&blob_contents, row["src_encoding"].as_str().unwrap()).unwrap();
-
-    row["contents"] = JsonValue::String(String::from_utf8(utf_contents).unwrap());  
+    let utf_str = decode_to_string(&blob_contents, row["src_encoding"].as_str().unwrap()).unwrap();
+    row["contents"] = JsonValue::String(utf_str);  
     Ok(row)
 }
 
@@ -156,6 +169,91 @@ fn process_parquet_file(pqt: &PathBuf, local_jsonl_dir: &PathBuf, max_lines: usi
 }
 
 
+
+struct ChunkResult {
+    compressed: Vec<u8>,
+    crc: u32,
+    size: u32,
+}
+
+
+fn process_parquet_file2(pqt: &PathBuf, local_jsonl_dir: &PathBuf, max_lines: usize) -> Result<(), Error> {
+    // Step 1: load parquet file into vec of rows 
+    let start_main = Instant::now();    
+    let (blob_loc, language, pqt_number) = extract_pqt_locations(pqt.clone()).unwrap();
+    let rows: Vec<JsonValue> = load_parquet_as_json_parallel(pqt.clone()).unwrap();
+    println!("Read pqt in {:?} msecs", start_main.elapsed().as_millis());
+    // Step 2: loop over chunks of rows 
+    let mut chunk_num = 0; 
+
+
+    let num_chunks = rows.len().div_ceil(max_lines);
+    let pbar = build_pbar(num_chunks, "Chunks");
+    for chunk in rows.chunks(max_lines) {
+        // and process each row of the chunk (in parallel!)
+        let start_chunk = Instant::now();
+        let processed_chunks: Vec<ChunkResult> = chunk.into_par_iter()
+            .map(|v| {
+                let mut output_str = process_row(v.clone(), &blob_loc).unwrap().to_string();
+                output_str.push('\n');
+                let bytes = output_str.as_bytes();
+                
+                // Calculate CRC32 of uncompressed data
+                let mut hasher = Hasher::new();
+                hasher.update(bytes);
+                let crc = hasher.finalize();
+                
+                // Compress the data
+                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+                encoder.write_all(bytes).unwrap();
+                let compressed = encoder.finish().unwrap();
+                
+                ChunkResult {
+                    compressed: compressed[10..compressed.len()-8].to_vec(),
+                    crc,
+                    size: bytes.len() as u32,
+                }
+            })
+            .collect();
+
+        // Combine all chunks
+        let mut final_output = Vec::new();
+        final_output.extend_from_slice(&GZIP_HEADER);
+
+        // Write all compressed data
+        let mut total_crc = Hasher::new();
+        let mut total_size = 0u32;
+
+        for chunk in processed_chunks {
+            final_output.extend(&chunk.compressed);
+            // Combine CRCs properly
+            let mut hasher = Hasher::new();
+            hasher.update(&chunk.crc.to_le_bytes());
+            total_crc = hasher;
+            total_size += chunk.size;
+        }
+
+        // Write final trailer
+        final_output.extend(&total_crc.finalize().to_le_bytes());
+        final_output.extend(&total_size.to_le_bytes());            
+
+        println!("Processed cuhnk in {:?} msecs", start_chunk.elapsed().as_millis());
+        let output_file_loc = get_output_file_loc(local_jsonl_dir, &language, &pqt_number, chunk_num);
+        let start_save = Instant::now();
+
+        write_bytes_gzip(final_output, output_file_loc).unwrap();
+        println!("Saved chunk in {:?} msecs", start_save.elapsed().as_millis());
+        chunk_num += 1;
+        pbar.inc(1);
+    }
+
+    println!("Made {:?} jsonl.gz's in {:?} seconds", num_chunks, start_main.elapsed().as_secs());
+    Ok(())
+}
+
+
+
+
 /*=========================================
 =                 MAIN                    =
 =========================================*/
@@ -168,7 +266,7 @@ fn main() {
     }
     let result = match &args.command {
         Commands::ProcessParquet {parquet_file, local_jsonl_dir, max_lines} => {
-            process_parquet_file(parquet_file, local_jsonl_dir, *max_lines)
+            process_parquet_file2(parquet_file, local_jsonl_dir, *max_lines)
         },
     };
     result.unwrap();
