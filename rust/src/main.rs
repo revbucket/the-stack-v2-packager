@@ -1,27 +1,16 @@
 use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use anyhow::{Result, Error};
-use crate::io::{load_parquet_as_json_parallel, read_gzip_file, write_string_gzip, decode_to_string, write_bytes};
+use crate::io::{load_parquet_as_json_parallel, read_gzip_file, decode_to_string, write_bytes};
 use serde_json::{Value as JsonValue};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::time::Instant;
-use encoding_rs::*;
-use crc32fast::Hasher;
 
-use std::io::{Write};
 use zstd::stream::encode_all;
 use zstd::DEFAULT_COMPRESSION_LEVEL;
 
 pub mod io;
-const GZIP_HEADER: [u8; 10] = [
-    0x1f, 0x8b,       // Magic numbers
-    0x08,             // Compression method (deflate)
-    0x00,             // Flags
-    0x00, 0x00, 0x00, 0x00,  // Modification time
-    0x00,             // Extra flags
-    0x00,             // Operating system
-];
 
 
 /*==============================================
@@ -102,20 +91,6 @@ fn get_output_file_loc(local_jsonl_dir: &PathBuf, language: &String, parquet_num
 
 
 
-fn convert_to_utf8(input: &[u8], encoding_name: &str) -> Result<Vec<u8>, String> {
-    // Get the encoding by name
-    let encoding = Encoding::for_label(encoding_name.as_bytes())
-        .ok_or_else(|| format!("Unsupported encoding: {}", encoding_name))?;
-    
-    // Decode from source encoding to UTF-8
-    let (cow, _, had_errors) = encoding.decode(input);
-    if had_errors {
-        return Err(format!("Decoding error for {}", encoding_name));
-    }
-    
-    // Return the UTF-8 bytes
-    Ok(cow.into_owned().into_bytes())
-}
 
 
 
@@ -134,6 +109,8 @@ fn process_row(mut row: JsonValue, blob_loc: &PathBuf) -> Result<JsonValue, Erro
 =                 COLLECT METHOD              =
 =============================================*/
 
+/*
+DEPRECATED
 fn process_parquet_file(pqt: &PathBuf, local_jsonl_dir: &PathBuf, max_lines: usize) -> Result<(), Error> {
     // Step 1: load parquet file into vec of rows 
     let start_main = Instant::now();    
@@ -167,13 +144,12 @@ fn process_parquet_file(pqt: &PathBuf, local_jsonl_dir: &PathBuf, max_lines: usi
     println!("Made {:?} jsonl.gz's in {:?} seconds", num_chunks, start_main.elapsed().as_secs());
     Ok(())
 }
+*/
 
 
 
 
-
-
-fn process_parquet_file2(pqt: &PathBuf, local_jsonl_dir: &PathBuf, max_lines: usize) -> Result<(), Error> {
+fn process_parquet_file(pqt: &PathBuf, local_jsonl_dir: &PathBuf, max_lines: usize) -> Result<(), Error> {
     // Step 1: load parquet file into vec of rows 
     let start_main = Instant::now();    
     let (blob_loc, language, pqt_number) = extract_pqt_locations(pqt.clone()).unwrap();
@@ -228,7 +204,7 @@ fn main() {
     }
     let result = match &args.command {
         Commands::ProcessParquet {parquet_file, local_jsonl_dir, max_lines} => {
-            process_parquet_file2(parquet_file, local_jsonl_dir, *max_lines)
+            process_parquet_file(parquet_file, local_jsonl_dir, *max_lines)
         },
     };
     result.unwrap();

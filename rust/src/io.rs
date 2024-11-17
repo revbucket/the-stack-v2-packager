@@ -1,4 +1,4 @@
-use crc32fast::Hasher;  // You'll need crc32fast = "1.3" in Cargo.toml
+  // You'll need crc32fast = "1.3" in Cargo.toml
 use std::io::{BufWriter, Write};
 use std::fs;
 use flate2::Compression;
@@ -18,18 +18,9 @@ use arrow::{
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use serde_json::{json, Value as JsonValue};
-use oem_cp::{decode_string_complete_table, decode_string_incomplete_table_checked, decode_string_incomplete_table_lossy};
+use oem_cp::decode_string_complete_table;
 use oem_cp::code_table::{DECODING_TABLE_CP855, DECODING_TABLE_CP852, DECODING_TABLE_CP866};
 
-
-const GZIP_HEADER: [u8; 10] = [
-    0x1f, 0x8b,       // Magic numbers
-    0x08,             // Compression method (deflate)
-    0x00,             // Flags
-    0x00, 0x00, 0x00, 0x00,  // Modification time
-    0x00,             // Extra flags
-    0x00,             // Operating system
-];
 
 /*====================================================================
 =                      READ PARQUET INTO LIST OF JSONS               =
