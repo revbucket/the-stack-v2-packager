@@ -19,7 +19,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use serde_json::{json, Value as JsonValue};
 use oem_cp::{decode_string_complete_table, decode_string_incomplete_table_checked, decode_string_incomplete_table_lossy};
-use oem_cp::code_table::{DECODING_TABLE_CP855, DECODING_TABLE_CP852};
+use oem_cp::code_table::{DECODING_TABLE_CP855, DECODING_TABLE_CP852, DECODING_TABLE_CP866};
 
 
 const GZIP_HEADER: [u8; 10] = [
@@ -169,6 +169,9 @@ pub(crate) fn decode_to_string(bytes: &[u8], encoding_name: &str) -> Result<Stri
     if encoding_name == "IBM855" {
         return Ok(decode_string_complete_table(bytes, &DECODING_TABLE_CP855));
     }
+    if encoding_name == "IBM866" {
+        return Ok(decode_string_complete_table(bytes, &DECODING_TABLE_CP866));
+    }    
 
     let encoding = match encoding_name.to_uppercase().as_str() {
         "BIG5" => BIG5,
