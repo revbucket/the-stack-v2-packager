@@ -269,10 +269,7 @@ pub(crate) fn write_string_gzip(content: String, path: PathBuf) -> Result<(), Er
     Ok(())
 }
 
-pub(crate) fn write_bytes_gzip(content: Vec<u8>, path: PathBuf) -> Result<(), Error> {
-    // Use a large buffer (8MB) for better performance
-    const BUFFER_SIZE: usize = 16 * 1024 * 1024;
-    
+pub(crate) fn write_bytes(content: Vec<u8>, path: PathBuf) -> Result<(), Error> {    
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).unwrap();
     }

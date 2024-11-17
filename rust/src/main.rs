@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use anyhow::{Result, Error};
-use crate::io::{load_parquet_as_json_parallel, read_gzip_file, write_string_gzip, decode_to_string, write_bytes_gzip};
+use crate::io::{load_parquet_as_json_parallel, read_gzip_file, write_string_gzip, decode_to_string, write_bytes};
 use serde_json::{Value as JsonValue};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -10,8 +10,8 @@ use encoding_rs::*;
 use crc32fast::Hasher;
 
 use std::io::{Write};
-use flate2::write::GzEncoder;
-use flate2::Compression;
+use zstd::stream::encode_all;
+use zstd::DEFAULT_COMPRESSION_LEVEL;
 
 pub mod io;
 const GZIP_HEADER: [u8; 10] = [
@@ -96,7 +96,7 @@ fn extract_pqt_locations(pqt: PathBuf) -> Result<(PathBuf, String, String), Erro
 
 
 fn get_output_file_loc(local_jsonl_dir: &PathBuf, language: &String, parquet_num: &String, jsonl_num: usize) -> PathBuf {
-    let filename = format!("{}-{}-{:04}.jsonl.gz", language.as_str(), parquet_num.as_str(), jsonl_num);
+    let filename = format!("{}-{}-{:04}.jsonl.zstd", language.as_str(), parquet_num.as_str(), jsonl_num);
     local_jsonl_dir.join(filename)
 }
 
@@ -170,11 +170,7 @@ fn process_parquet_file(pqt: &PathBuf, local_jsonl_dir: &PathBuf, max_lines: usi
 
 
 
-struct ChunkResult {
-    compressed: Vec<u8>,
-    crc: u32,
-    size: u32,
-}
+
 
 
 fn process_parquet_file2(pqt: &PathBuf, local_jsonl_dir: &PathBuf, max_lines: usize) -> Result<(), Error> {
@@ -192,56 +188,22 @@ fn process_parquet_file2(pqt: &PathBuf, local_jsonl_dir: &PathBuf, max_lines: us
     for chunk in rows.chunks(max_lines) {
         // and process each row of the chunk (in parallel!)
         let start_chunk = Instant::now();
-        let processed_chunks: Vec<ChunkResult> = chunk.into_par_iter()
+        let processed_chunks: Vec<u8> = chunk.into_par_iter()
             .map(|v| {
                 let mut output_str = process_row(v.clone(), &blob_loc).unwrap().to_string();
                 output_str.push('\n');
                 let bytes = output_str.as_bytes();
-                
-                // Calculate CRC32 of uncompressed data
-                let mut hasher = Hasher::new();
-                hasher.update(bytes);
-                let crc = hasher.finalize();
-                
-                // Compress the data
-                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-                encoder.write_all(bytes).unwrap();
-                let compressed = encoder.finish().unwrap();
-                
-                ChunkResult {
-                    compressed: compressed[10..compressed.len()-8].to_vec(),
-                    crc,
-                    size: bytes.len() as u32,
-                }
-            })
+                let out = encode_all(bytes, DEFAULT_COMPRESSION_LEVEL).unwrap();
+                out
+            }).flatten()
             .collect();
 
-        // Combine all chunks
-        let mut final_output = Vec::new();
-        final_output.extend_from_slice(&GZIP_HEADER);
-
-        // Write all compressed data
-        let mut total_crc = Hasher::new();
-        let mut total_size = 0u32;
-
-        for chunk in processed_chunks {
-            final_output.extend(&chunk.compressed);
-            // Combine CRCs properly
-            let mut hasher = Hasher::new();
-            hasher.update(&chunk.crc.to_le_bytes());
-            total_crc = hasher;
-            total_size += chunk.size;
-        }
-
-        // Write final trailer
-        final_output.extend(&total_crc.finalize().to_le_bytes());
-        final_output.extend(&total_size.to_le_bytes());            
 
         println!("Processed cuhnk in {:?} msecs", start_chunk.elapsed().as_millis());
         let output_file_loc = get_output_file_loc(local_jsonl_dir, &language, &pqt_number, chunk_num);
         let start_save = Instant::now();
 
-        write_bytes_gzip(final_output, output_file_loc).unwrap();
+        write_bytes(processed_chunks, output_file_loc).unwrap();
         println!("Saved chunk in {:?} msecs", start_save.elapsed().as_millis());
         chunk_num += 1;
         pbar.inc(1);
