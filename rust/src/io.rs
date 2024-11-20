@@ -1,4 +1,5 @@
   // You'll need crc32fast = "1.3" in Cargo.toml
+use std::fmt;
 use std::io::{BufWriter, Write};
 use std::fs;
 use flate2::Compression;
@@ -224,9 +225,40 @@ pub(crate) fn decode_to_string(bytes: &[u8], encoding_name: &str) -> Result<Stri
 /*=============================================================
 =                        GZIP TO/FROM BYTES                   =
 =============================================================*/
+#[derive(Debug)]
+pub(crate) enum FileProcessError {
+    TooManyMissing {
+        missing_count: usize,
+        total_files: usize
+    },
+    FileNotFound {
+        filename: PathBuf
+    }
+
+}
+
+impl fmt::Display for FileProcessError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            FileProcessError::FileNotFound { filename } => {
+                write!(f, "File not found: {}", filename.display())
+            }
+            FileProcessError::TooManyMissing { missing_count, total_files } => {
+                write!(f, "Too many files missing: {}/{}", missing_count, total_files)
+            }
+        }
+    }
+}
+impl std::error::Error for FileProcessError {}
+
 
 pub(crate) fn read_gzip_file(path: &PathBuf) -> Result<Vec<u8>> {
     // Open the file
+    if !path.exists() {
+        return Err(FileProcessError::FileNotFound { filename: path.clone() }.into());
+
+    }
+
     let file = File::open(path)?;
     
     // Create a GzDecoder wrapping the file
