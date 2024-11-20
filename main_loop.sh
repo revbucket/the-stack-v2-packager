@@ -60,22 +60,27 @@ while IFS= read -r line; do
     # Note: We use current_line-1 because bash arrays are 0-based
     if [ $(( (current_line-1) % j )) -eq "$i" ]; then
         ((processed_lines++))
-		
-		# Step 1: Download all things with s5cmd 
-		cmd_file="${line%.parquet}.cmd.txt"
-		echo ""
-        echo "Working on ${line}..."
-		s5cmd run ${base_dir}/the-stack-v2/raw-hf-parquets/${cmd_file} > /dev/null
-		lang=$(basename "$(dirname "$line")")
+		python_output=$(python3 completed_checker.py --parquet ${line})
+        if [ "$python_output" = "True" ]; then
+            echo "Skipping ${line} -- already completed!"
+            continue
+        else 
+    		# Step 1: Download all things with s5cmd 
+    		cmd_file="${line%.parquet}.cmd.txt"
+    		echo ""
+            echo "Working on ${line}..."
+    		s5cmd run ${base_dir}/the-stack-v2/raw-hf-parquets/${cmd_file} > /dev/null
+    		lang=$(basename "$(dirname "$line")")
 
-		./rust/target/release/rust process-parquet --parquet-file ${base_dir}/the-stack-v2/raw-hf-parquets/${line} --local-jsonl-dir ${base_dir}/jsonls/${lang}
-		s5cmd sync ${base_dir}/jsonls/${lang}/ s3://ai2-llm/pretraining-data/sources/the-stack-v2/jsonl_data/${lang}/
-		rm -rf ${base_dir}/the-stack-v2/data/
-		rm -rf ${base_dir}/jsonls/${lang}
-		echo ""
-        #sleep 5.0
-        # Calculate percentage based on processed lines
-        percentage=$(printf "%.0f" $(echo "$processed_lines * 100 / $expected_lines" | bc -l))        
+    		./rust/target/release/rust process-parquet --parquet-file ${base_dir}/the-stack-v2/raw-hf-parquets/${line} --local-jsonl-dir ${base_dir}/jsonls/${lang}
+    		s5cmd sync ${base_dir}/jsonls/${lang}/ s3://ai2-llm/pretraining-data/sources/the-stack-v2/jsonl_data/${lang}/
+    		rm -rf ${base_dir}/the-stack-v2/data/
+    		rm -rf ${base_dir}/jsonls/${lang}
+    		echo ""
+            #sleep 5.0
+            # Calculate percentage based on processed lines
+            percentage=$(printf "%.0f" $(echo "$processed_lines * 100 / $expected_lines" | bc -l))        
+        fi
         # Update progress bar
         draw_progress_bar "$percentage" $line
         

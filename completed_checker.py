@@ -10,6 +10,7 @@ It's always a nightmare.)
 import boto3
 from typing import List, Tuple
 import os
+import argparse
 
 PREFIX = 'pretraining-data/sources/the-stack-v2/'
 PQT_LOC = 'raw-hf-parquets'
@@ -64,20 +65,25 @@ def get_zstd_loc(bucket_name, pqt):
 def main(bucket_name, pqt):
 	zstd_loc = get_zstd_loc(bucket_name, pqt)
 	file_sizes = [_ for _ in list_s3_files_with_sizes(bucket_name, zstd_loc) if _[0].endswith('.jsonl.zstd')]
-	if len(file_sizes) == 0: 
-		print('False')
-		return
+	if len(file_sizes) == 0: return False
+
 	num_files = len(file_sizes)
 	file = os.path.basename(file_sizes[0][0]) # Just look at one file 
 	parts = file.split('-')
 	assert parts[-2] == 'of'
 	total_expected_files = int(parts[-1].split('.')[0])
 
-	print(num_files == total_expected_files)
-	return
+	return (num_files == total_expected_files)
 
 
-	
+if __name__ == '__main__':
+	parser = argparse.ArgumentParser()
+	parser.add_argument('--bucket', type=str, default='ai2-llm')
+	parser.add_argument('--parquet', type=str, required=True, 
+						help="Should look like AGS_Script/train-00000-of-00001.parquet")
+
+	args = parser.parse_args()
+	print(main(args.bucket, args.parquet))
 
 
 
