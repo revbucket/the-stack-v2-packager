@@ -64,14 +64,17 @@ def get_zstd_loc(bucket_name, pqt):
 def main(bucket_name, pqt):
 	zstd_loc = get_zstd_loc(bucket_name, pqt)
 	file_sizes = [_ for _ in list_s3_files_with_sizes(bucket_name, zstd_loc) if _[0].endswith('.jsonl.zstd')]
-	if len(files_sizes) == 0: return False
+	if len(file_sizes) == 0: 
+		print('False')
+		return
 	num_files = len(file_sizes)
 	file = os.path.basename(file_sizes[0][0]) # Just look at one file 
 	parts = file.split('-')
 	assert parts[-2] == 'of'
 	total_expected_files = int(parts[-1].split('.')[0])
 
-	return num_files == total_expected_files
+	print(num_files == total_expected_files)
+	return
 
 
 	
