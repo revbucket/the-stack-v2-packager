@@ -80,7 +80,7 @@ if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--bucket', type=str, default='ai2-llm')
 	parser.add_argument('--parquet', type=str, required=True, 
-						help="Should look like AGS_Script/train-00000-of-00001.parquet")
+						help="Should look like 'AGS_Script/train-00000-of-00001.parquet' ")
 
 	args = parser.parse_args()
 	print(main(args.bucket, args.parquet))
